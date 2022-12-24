@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+  <body>
+    <textarea readonly style="width: 100%" rows="10" id="m"></textarea>
+    <textarea readonly style="width: 100%" rows="10" id="w"></textarea>
+    <p>
+      <button onclick="ws.close(); ws = null; this.disabled = true" id="c">Close</button>
+      <span id="exts"></span>
+    </p>
+
+    <script src="../phiws.js"></script>
+
+    <script>
+      m.value = w.value = ''
+      c.disabled = false
+
+      var phiws = window.ws = new Phiws([
+        'ws://127.0.0.1:8888',
+        'ws://127.0.0.1:81/examples/phiwsjs.php#',
+        {
+          url: 'sse.php',
+          withCredentials: true,
+          stopSseEvent: null,
+        },
+      ], {
+        log: true,
+        easyAliases: true,
+        autoConnect: false,
+        ssePrefixWithEventType:  true,
+      })
+
+      phiws.on('newMessage', function (e) {
+        console.info('<<< [' + e.data + '] >>>')
+      })
+
+      setTimeout(function () {
+        phiws.on('message:at', function (e) {
+          console.info('AT: ' + e.data)
+        })
+      }, 0)
+
+      phiws.connect()
+    </script>
+
+    <script type="text/plain">
+      m.value = w.value = ''
+      c.disabled = false
+
+      var log = true
+      var mode = 0
+      var ws
+
+      ;(function connect() {
+        console.info('connecting now')
+
+        ws = mode == 0 ? new WebSocket('ws://127.0.0.1:81/examples/phiwsjs.php')
+          : new WebSocket('ws://127.0.0.1:8888')
+
+        var sentHashes = []
+
+        ws.onmessage = function (event) {
+          var gotHash = event.data.match(/^C!.+?hash:([a-fA-F\d]+)/i)
+
+          if (gotHash) {
+            gotHash = gotHash[1].toLowerCase()
+            var hash = sentHashes.shift().toLowerCase()
+
+            if (gotHash != hash) {
+              w.value += [
+                'receiver calculated wrong hash:',
+                '- must: ' + hash,
+                '- recv: ' + gotHash + ' (wrong)',
+                '',
+              ].join('\n')
+
+              ws.close()
+            } else {
+              w.value += 'recv hash ok: ' + hash + ' [' + event.data.length + ']\n'
+            }
+          }
+
+          log && (m.value += 'rcv  ' + event.data.substr(0, 140) + '\n\n')
+          log && console.dir([event])
+
+          if (event.data.match(/^R!/)) {
+            digest(event.data, function (hash) {
+              var msg = 'C! recv complete size:' + event.data.length + ', on wire:0, hash:' + hash
+              log && (m.value += 'sent ' + msg + '\n\n')
+              ws.send(msg)
+            })
+          }
+        }
+
+        ws.onopen = function () {
+          if (ws.readyState != ws.OPEN) { return }
+
+          exts.innerText = ws.extensions
+
+          var totalLength = Math.ceil(Math.random() * 30) * 100000 +
+                            Math.ceil(Math.random() * 100000)
+          for (var s = ran2comp(); s.length < totalLength; s += ran2comp())
+          s = s.substr(0, totalLength)
+          send('R! ' + s)
+          setTimeout(arguments.callee, 2500)
+
+          //var size = Math.floor(1024 * 1024 * Math.random() * 3)
+          //ws.send(new Uint8Array(size))
+          //m.value += 'sent bin ' + size + '\n\n'
+          //setTimeout(arguments.callee, 2500)
+        }
+
+        ws.onclose = function (e) {
+          console.warn('WS CLOSE')
+          console.dir(e)
+
+          w.value += '== CLOSED ==\n'
+          w.value += '- wasClean ' + e.wasClean + '\n'
+          w.value += '- reason ' + e.reason + '\n'
+
+          if (!ws) { return }
+
+          if (e.code == 1012 ) {
+            setTimeout(function () {
+              if (ws) {
+                console.info('reconnecting')
+                w.value += '\n-- reconnecting --\n'
+                connect()
+              }
+            }, 2000)
+          }
+        }
+
+        function send(msg) {
+          digest(msg, function (hash) {
+            sentHashes.push(hash)
+
+            if (log) {
+              m.value += 'sent [' + msg.length + '] hash ' + hash +
+                        '\n' + '  ' + msg.substr(0, 50) + '\n\n'
+            }
+
+            ws.send(msg)
+          })
+        }
+
+        function digest(msg, done) {
+          crypto.subtle.digest('sha-256', new TextEncoder('utf-8').encode(msg))
+            .then(function (buf) {
+              var hash = ''
+              buf = new DataView(buf)
+
+              for (var i = 0; i < buf.byteLength; i++) {
+                var ch = buf.getUint8(i).toString(16)
+                ch.length < 2 && (ch = '0' + ch)
+                hash += ch
+              }
+
+              done(hash)
+            })
+        }
+
+        function ran2comp() {
+          var res = ''
+          var blockCount = Math.ceil(Math.random() * 50)
+
+          for (var blockI = 0; blockI < blockCount; blockI++) {
+            var length = Math.ceil(Math.random() * 50)
+            var ch = 61 + Math.ceil(Math.random() * 20)
+            ch = String.fromCharCode(ch)
+
+            for (var i = 0; i < length; i++) {
+              res += ch
+            }
+          }
+
+          return res
+        }
+      })()
+    </script>
+  </body>
+</html>
