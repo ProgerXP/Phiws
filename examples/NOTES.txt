@@ -1,0 +1,113 @@
+Server-Sent Events
+==================================================
+
+- blocks separated with 2 end-of-lines which are CRLF or CR or LF (exact
+  break type is selected once per stream (response))
+- blocks consist of "lines" separeted with end-of-line
+- each "line" in a block is of key[: [value]] format; without ':' value = ''
+- if line starts with ':' it's a comment and is ignored (can be used for pings)
+- a single space (0x20) is removed from the beginning of 'value', if present
+- entire stream (response) can begin with UTF8 BOM: FEFF
+- 'key' can be any unicode char but LF CR ':'
+- 'value' - but LF CR
+
+"Legacy proxy servers are known to, in certain cases, drop HTTP connections after a short timeout. To protect against such proxy servers, authors can include a comment line (one starting with a ':' character) every 15 seconds or so."
+
+"Authors are also cautioned that HTTP chunking can have unexpected negative effects on the reliability of this protocol, in particular if the chunking is done by a different layer unaware of the timing requirements. If this is a problem, chunking can be disabled for serving event streams."
+
+"Clients that support HTTP's per-server connection limitation might run into trouble when opening multiple pages from a site if each page has an EventSource to the same domain. Authors can avoid this using the relatively complex mechanism of using unique domain names per connection, or by allowing the user to enable or disable the EventSource functionality on a per-page basis, or by sharing a single EventSource object using a shared worker."
+
+- blank line essentially triggers event dispatch
+- if a block only contained comments then no event is fired
+
+"Once the end of the file is reached, any pending data must be discarded. (If the file ends in the middle of an event, before the final empty line, the incomplete event is not dispatched.)"
+- this is probably to avoid triggering incomplete events on connection drop
+
+- event props are case-sensitive:
+"Field names must be compared literally, with no case folding performed."
+
+event props:
+- event - event type (name)
+- data - duplicates are joined with LF in between
+- id - event.lastEventId and Last-Event-ID
+- retry - "If the field value consists of only ASCII digits, then [...] set the event stream's reconnection time to that integer. Otherwise, ignore the field."
+- all others are ignored
+
+JavaScript:
+
+  var source = new EventSource('updates.php');
+  source.addEventListener('type', h, false);
+
+h accepts one argument: event and is only called when 'event' prop = 'type'
+
+"Clients will reconnect if the connection is closed; a client can be told to stop reconnecting using the HTTP 204 No Content response code."
+
+- when client reconnects he sends Last-Event-ID header with value of last seen 'id' prop
+- if 'id' prop had no value (eg "id" or "id:") then this header is not sent
+
+EventSource:
+- url
+- withCredentials - CORS (https://html.spec.whatwg.org/multipage/infrastructure.html#attr-crossorigin-use-credentials)
+- readyState = connecting 0, open 1, closed 2
+- onopen
+- onmessage - only called for event types not handled by existing addEventListener
+- onerror
+- close
+
+"User agents may set Accept: text/event-stream in request's header list."
+- so server should use this content-type
+
+"HTTP 200 OK responses that have a Content-Type specifying an unsupported type, or that have no Content-Type at all, must cause the user agent to fail the connection."
+
+MessageEvent:
+- event .type = 'event' prop or if it's empty then 'message'
+- doesn't bubble
+- .data = join(LF, all data-s)
+- .origin - unicode URL of the final server-side URL (after redirects)
+- .lastEventId
+
+this will fire an event with .data = '\n'
+
+  data
+  data
+
+
+WebSocket
+==================================================
+
+WebSocket
+- constructor(url, protocols = []) - protocols is str or array of str
+  errors if url's scheme is not ws or wss or contains '#'
+  errors if protos has duplicates or invalid symbols
+- url
+- readyState = connecting 0, open 1, closing 2, closed 3
+  closing = "The connection is going through the closing handshake, or the close() method has been invoked."
+- bufferedAmount - "the number of bytes of application data [...] that have been queued using send() but that [...] had not yet been transmitted to the network. [...] This does not include framing overhead incurred by the protocol, or buffering done by the operating system or network hardware."
+- onopen
+- onerror - either close or error is fired
+- onclose - .wasClean bool (false), .code int (0), .reason str ('')
+  certain failures are deliberately concealed from the JS code with uniform code 1006
+  "User agents must not convey any failure information to scripts in a way that would allow a script to distinguish the following situations [...]"
+  this includes situations when handshake failed due to non-negotiated extensions or protocol
+- extensions - str
+- protocol - str
+- close([int code, [str reason]])
+  errors if code is not 1000 and not 3000-4999 or if reason length is >123
+  call ignored if readystate is 2 or 3
+  if code and reason are missing the Close frame will have empty body
+  "The close() method does not discard previously sent messages before starting the WebSocket closing handshake — even if, in practice, the user agent is still busy sending those messages, the handshake will only start after the messages are sent."
+  it seems after transition to 2 new incoming frames won't fire events
+- onmessage
+- binaryType - initially string "blob"; can be set to "arraybuffer" to return binary data as ArrayBuffer
+  "if the attribute is set to "blob", it is safe to spool it to disk, and if it is set to "arraybuffer", it is likely more efficient to keep the data in memory."
+- send(data) - data = str, Blob, ArrayBuffer, ArrayBufferView
+  when str, sends Text frame 0x01; closes WS if send buffer is full (bufferedAmount)
+  Blob, others - same as str but with Binary frame 0x02
+
+event:
+- .type = 'message'
+- doesn't bubble
+- .origin = WS target url
+- .data = str (Text) or object (Binary) depends on binaryType
+
+ping/pong API is not exposed
